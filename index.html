@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>数据地图 · DataMap</title>
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#080c10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://unpkg.com/deck.gl@8.9.35/dist.min.js"></script>
+<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+<link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600&family=Noto+Sans+SC:wght@300;400;500&display=swap" rel="stylesheet" />
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #080c10;
+    --surface: #0d1117;
+    --surface2: #161b22;
+    --border: rgba(255,255,255,0.07);
+    --border-active: rgba(99,210,255,0.4);
+    --accent: #63d2ff;
+    --accent2: #ff6b6b;
+    --accent3: #ffd166;
+    --text: #e6edf3;
+    --text-muted: #7d8590;
+    --text-dim: #404850;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Noto Sans SC', sans-serif;
+    --radius: 6px;
+    --panel-w: 320px;
+  }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+  }
+
+  #map-container { position: fixed; inset: 0; }
+  #header {
+    position: fixed; top: 0; left: 0; right: 0; height: 48px; z-index: 100;
+    background: linear-gradient(180deg, rgba(8,12,16,0.95) 0%, rgba(8,12,16,0) 100%);
+    display: flex; align-items: center; padding: 0 20px; gap: 16px;
+    pointer-events: none;
+  }
+  #header h1 {
+    font-family: var(--mono); font-size: 13px; font-weight: 600;
+    color: var(--accent); letter-spacing: 0.12em; text-transform: uppercase;
+    pointer-events: auto;
+  }
+  #header .sep { width: 1px; height: 16px; background: var(--border); }
+  #point-count {
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    pointer-events: auto;
+  }
+  #point-count span { color: var(--accent); font-weight: 600; }
+
+  #theme-toggle {
+    position: fixed; top: 12px; right: 20px; z-index: 200;
+    display: flex; align-items: center; gap: 6px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 4px 12px 4px 8px;
+    cursor: pointer; transition: border-color 0.2s;
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+  }
+  #theme-toggle:hover { border-color: var(--border-active); color: var(--text); }
+  #theme-toggle .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); transition: background 0.3s;
+  }
+
+  #panel {
+    position: fixed; top: 0; left: 0; bottom: 0; width: var(--panel-w);
+    z-index: 50; display: flex; flex-direction: column;
+    background: rgba(8,12,16,0.92);
+    border-right: 1px solid var(--border);
+    backdrop-filter: blur(12px);
+    transform: translateX(0); transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
+  }
+  #panel.collapsed { transform: translateX(calc(-1 * var(--panel-w))); }
+
+  #panel-toggle {
+    position: fixed; left: var(--panel-w); top: 50%; transform: translateY(-50%);
+    z-index: 60; width: 20px; height: 48px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-left: none; border-radius: 0 var(--radius) var(--radius) 0;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: left 0.3s cubic-bezier(0.4,0,0.2,1), background 0.2s;
+    color: var(--text-muted);
+  }
+  #panel-toggle:hover { background: var(--surface); color: var(--text); }
+  #panel.collapsed + #panel-toggle { left: 0; }
+
+  .panel-section {
+    padding: 16px 16px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-section:last-child { border-bottom: none; flex: 1; overflow-y: auto; }
+
+  .section-label {
+    font-family: var(--mono); font-size: 9px; font-weight: 600;
+    letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--text-dim); margin-bottom: 10px;
+  }
+
+  .panel-logo {
+    padding: 20px 16px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-logo h2 {
+    font-family: var(--mono); font-size: 15px; font-weight: 600;
+    color: var(--accent); letter-spacing: 0.08em;
+  }
+  .panel-logo p { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+  #upload-zone {
+    border: 1px dashed var(--border-active);
+    border-radius: var(--radius);
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    position: relative;
+  }
+  #upload-zone:hover { background: rgba(99,210,255,0.04); }
+  #upload-zone.drag-over { background: rgba(99,210,255,0.08); border-color: var(--accent); }
+  #upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  #upload-zone .upload-icon { font-size: 24px; margin-bottom: 8px; }
+  #upload-zone .upload-text { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+  #upload-zone .upload-text strong { color: var(--accent); display: block; font-family: var(--mono); }
+
+  #progress-wrap { display: none; margin-top: 10px; }
+  #progress-bar-bg {
+    height: 2px; background: var(--surface2); border-radius: 2px; overflow: hidden;
+  }
+  #progress-bar { height: 100%; background: var(--accent); width: 0%; transition: width 0.1s; }
+  #progress-text { font-family: var(--mono); font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+
+  #col-mapping { display: none; }
+  .col-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .col-row label { font-size: 11px; color: var(--text-muted); width: 60px; flex-shrink: 0; }
+  .col-row select {
+    flex: 1; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); border-radius: var(--radius); padding: 5px 8px;
+    font-size: 11px; font-family: var(--mono); cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .col-row select:focus { outline: none; border-color: var(--border-active); }
+
+  #apply-btn {
+    width: 100%; padding: 8px; margin-top: 4px;
+    background: rgba(99,210,255,0.12); border: 1px solid var(--border-active);
+    color: var(--accent); border-radius: var(--radius);
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    cursor: pointer; letter-spacing: 0.06em; transition: background 0.2s;
+  }
+  #apply-btn:hover { background: rgba(99,210,255,0.2); }
+
+  #search-box {
+    width: 100%; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 8px 10px;
+    color: var(--text); font-size: 12px; font-family: var(--sans);
+    transition: border-color 0.2s;
+  }
+  #search-box:focus { outline: none; border-color: var(--border-active); }
+  #search-box::placeholder { color: var(--text-dim); }
+
+  #cat-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .cat-chip {
+    padding: 4px 10px; border-radius: 20px; font-size: 11px;
+    border: 1px solid var(--border); background: var(--surface2);
+    color: var(--text-muted); cursor: pointer; transition: all 0.15s;
+    font-family: var(--mono);
+    user-select: none;
+  }
+  .cat-chip:hover { border-color: var(--border-active); color: var(--text); }
+  .cat-chip.active {
+    background: rgba(99,210,255,0.15);
+    border-color: var(--accent); color: var(--accent);
+  }
+  .cat-chip .chip-dot {
+    display: inline-block; width: 6px; height: 6px;
+    border-radius: 50%; margin-right: 5px; vertical-align: middle;
+  }
+
+  .range-wrap { margin-top: 8px; }
+  .range-labels {
+    display: flex; justify-content: space-between;
+    font-family: var(--mono); font-size: 10px; color: var(--text-muted); margin-bottom: 4px;
+  }
+  input[type=range] {
+    width: 100%; accent-color: var(--accent);
+    background: transparent; cursor: pointer;
+  }
+  .range-row { display: flex; gap: 8px; }
+  .range-row input[type=range] { flex: 1; }
+
+  #stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat-card {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 10px 12px;
+  }
+  .stat-card .stat-val {
+    font-family: var(--mono); font-size: 16px; font-weight: 600; color: var(--accent);
+  }
+  .stat-card .stat-label { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+  #popup {
+    position: fixed; z-index: 200; pointer-events: none;
+    opacity: 0; transform: translateY(6px);
+    transition: opacity 0.15s, transform 0.15s;
+    min-width: 220px; max-width: 300px;
+  }
+  #popup.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
+  #popup-inner {
+    background: var(--surface);
+    border: 1px solid var(--border-active);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(99,210,255,0.05);
+    overflow: hidden;
+  }
+  #popup-header {
+    padding: 10px 14px 8px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(99,210,255,0.05);
+  }
+  #popup-name { font-size: 13px; font-weight: 500; color: var(--text); }
+  #popup-cat {
+    display: inline-block; margin-top: 4px;
+    font-family: var(--mono); font-size: 10px; padding: 2px 7px;
+    border-radius: 10px; border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+  #popup-body { padding: 10px 14px; }
+  .popup-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 5px; gap: 12px;
+  }
+  .popup-key { font-size: 11px; color: var(--text-muted); }
+  .popup-val {
+    font-family: var(--mono); font-size: 11px; color: var(--text);
+    word-break: break-all; text-align: right;
+  }
+  #popup-close {
+    position: absolute; top: 6px; right: 8px;
+    background: none; border: none; color: var(--text-muted);
+    cursor: pointer; font-size: 14px; pointer-events: auto;
+    transition: color 0.15s;
+  }
+  #popup-close:hover { color: var(--text); }
+
+  #toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(60px);
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 20px; padding: 8px 18px;
+    font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+    z-index: 300; transition: transform 0.3s cubic-bezier(0.4,0,0.2,1), opacity 0.3s;
+    opacity: 0; white-space: nowrap;
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  body.light {
+    --bg: #f0f4f8;
+    --surface: #ffffff;
+    --surface2: #f0f4f8;
+    --border: rgba(0,0,0,0.08);
+    --border-active: rgba(0,100,200,0.4);
+    --accent: #0064c8;
+    --text: #1a202c;
+    --text-muted: #718096;
+    --text-dim: #cbd5e0;
+  }
+
+  #coords {
+    position: fixed; bottom: 10px; right: 16px; z-index: 100;
+    font-family: var(--mono); font-size: 10px; color: var(--text-dim);
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="map-container">
+  <div id="map" style="width:100%;height:100%;"></div>
+</div>
+
+<div id="header">
+  <h1>◈ DataMap</h1>
+  <div class="sep"></div>
+  <div id="point-count">显示 <span id="vis-count">0</span> / <span id="total-count">0</span> 个点</div>
+</div>
+
+<div id="theme-toggle" onclick="toggleTheme()">
+  <div class="dot"></div>
+  <span id="theme-label">暗色</span>
+</div>
+
+<div id="panel">
+  <div class="panel-logo">
+    <h2>DATAMAP</h2>
+    <p>Deck.gl 大数据地图可视化</p>
+  </div>
+
+  <div class="panel-section">
+    <div class="section-label">数据源</div>
+    <div id="upload-zone">
+      <input type="file" id="file-input" accept=".csv" />
+      <div class="upload-icon">⬆</div>
+      <div class="upload-text">
+        <strong>拖拽 CSV 文件至此</strong>
+        或点击选择文件 · 支持 30MB+
+      </div>
+    </div>
+    <div id="progress-wrap">
+      <div id="progress-bar-bg"><div id="progress-bar"></div></div>
+      <div id="progress-text">解析中…</div>
+    </div>
+  </div>
+
+  <div class="panel-section" id="col-mapping">
+    <div class="section-label">列映射</div>
+    <div class="col-row">
+      <label>经度 lng</label>
+      <select id="col-lng"></select>
+    </div>
+    <div class="col-row">
+      <label>纬度 lat</label>
+      <select id="col-lat"></select>
+    </div>
+    <div class="col-row">
+      <label>名称</label>
+      <select id="col-name"></select>
+    </div>
+    <div class="col-row">
+      <label>分类</label>
+      <select id="col-cat"></select>
+    </div>
+    <div class="col-row">
+      <label>数值</label>
+      <select id="col-val"></select>
+    </div>
+    <button id="apply-btn" onclick="applyMapping()">▶ 应用并渲染地图</button>
+  </div>
+
+  <div class="panel-section" id="filter-section" style="display:none">
+    <div class="section-label">搜索</div>
+    <input type="text" id="search-box" placeholder="搜索名称…" oninput="applyFilters()" />
+  </div>
+
+  <div class="panel-section" id="cat-section" style="display:none">
+    <div class="section-label">分类筛选</div>
+    <div id="cat-filters"></div>
+  </div>
+
+  <div class="panel-section" id="range-section" style="display:none">
+    <div class="section-label">数值范围</div>
+    <div class="range-wrap">
+      <div class="range-labels">
+        <span id="range-min-label">0</span>
+        <span id="range-max-label">100</span>
+      </div>
+      <div class="range-row">
+        <input type="range" id="range-min" oninput="onRangeChange()" />
+        <input type="range" id="range-max" oninput="onRangeChange()" />
+      </div>
+    </div>
+  </div>
+
+  <div class="panel-section" id="stats-section" style="display:none">
+    <div class="section-label">统计</div>
+    <div id="stats-grid">
+      <div class="stat-card">
+        <div class="stat-val" id="stat-total">-</div>
+        <div class="stat-label">总数据点</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val" id="stat-cats">-</div>
+        <div class="stat-label">分类数</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val" id="stat-valmin">-</div>
+        <div class="stat-label">最小值</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val" id="stat-valmax">-</div>
+        <div class="stat-label">最大值</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="panel-toggle" onclick="togglePanel()">‹</div>
+
+<div id="popup">
+  <div id="popup-inner">
+    <button id="popup-close" onclick="closePopup()">✕</button>
+    <div id="popup-header">
+      <div id="popup-name">-</div>
+      <div id="popup-cat">-</div>
+    </div>
+    <div id="popup-body"></div>
+  </div>
+</div>
+
+<div id="coords">0.0000, 0.0000</div>
+
+<div id="toast"></div>
+
+<script>
+const state = {
+  rawData: [],
+  filteredData: [],
+  columns: [],
+  mapping: { lng:'', lat:'', name:'', cat:'', val:'' },
+  activeCats: new Set(),
+  allCats: [],
+  valMin: 0,
+  valMax: 100,
+  filterMin: 0,
+  filterMax: 100,
+  searchText: '',
+  theme: 'dark',
+  deckgl: null,
+  panelOpen: true,
+  allChipEl: null,
+};
+
+// 灰蓝科技风渐变：浅灰蓝 -> 深灰蓝
+const MONOCHROME_BASE = {
+  light: [198, 210, 224],
+  dark: [58, 92, 128]
+};
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function interpolateColor(c1, c2, t) {
+  return [
+    Math.round(lerp(c1[0], c2[0], t)),
+    Math.round(lerp(c1[1], c2[1], t)),
+    Math.round(lerp(c1[2], c2[2], t))
+  ];
+}
+
+function getCategoryGradientColor(index, total) {
+  const start = MONOCHROME_BASE.light;
+  const end = MONOCHROME_BASE.dark;
+
+  if (total <= 1) {
+    return interpolateColor(start, end, 0.55);
+  }
+
+  const t = index / (total - 1);
+  return interpolateColor(start, end, t);
+}
+
+function getMapStyle() {
+  return state.theme === 'dark'
+    ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+    : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+}
+
+function toggleTheme() {
+  state.theme = state.theme === 'dark' ? 'light' : 'dark';
+  document.body.classList.toggle('light', state.theme === 'light');
+  document.getElementById('theme-label').textContent = state.theme === 'dark' ? '暗色' : '亮色';
+  document.querySelector('#theme-toggle .dot').style.background =
+    state.theme === 'light' ? '#0064c8' : '#63d2ff';
+
+  if (state.deckgl) {
+    state.deckgl.setProps({ mapStyle: getMapStyle() });
+    updateMap();
+  }
+}
+
+function togglePanel() {
+  state.panelOpen = !state.panelOpen;
+  document.getElementById('panel').classList.toggle('collapsed', !state.panelOpen);
+  document.getElementById('panel-toggle').textContent = state.panelOpen ? '‹' : '›';
+}
+
+const uploadZone = document.getElementById('upload-zone');
+const fileInput  = document.getElementById('file-input');
+
+uploadZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  uploadZone.classList.add('drag-over');
+});
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) loadCSV(file);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) loadCSV(e.target.files[0]);
+});
+
+function resetUIForNewData() {
+  state.rawData = [];
+  state.filteredData = [];
+  state.columns = [];
+  state.mapping = { lng:'', lat:'', name:'', cat:'', val:'' };
+  state.activeCats = new Set();
+  state.allCats = [];
+  state.valMin = 0;
+  state.valMax = 100;
+  state.filterMin = 0;
+  state.filterMax = 100;
+  state.allChipEl = null;
+
+  document.getElementById('col-mapping').style.display = 'none';
+  document.getElementById('filter-section').style.display = 'none';
+  document.getElementById('cat-section').style.display = 'none';
+  document.getElementById('range-section').style.display = 'none';
+  document.getElementById('stats-section').style.display = 'none';
+
+  document.getElementById('cat-filters').innerHTML = '';
+  document.getElementById('search-box').value = '';
+  document.getElementById('vis-count').textContent = '0';
+  document.getElementById('total-count').textContent = '0';
+  document.getElementById('stat-total').textContent = '-';
+  document.getElementById('stat-cats').textContent = '-';
+  document.getElementById('stat-valmin').textContent = '-';
+  document.getElementById('stat-valmax').textContent = '-';
+
+  closePopup();
+}
+
+function loadCSV(file) {
+  if (!file) return;
+
+  resetUIForNewData();
+
+  const progWrap = document.getElementById('progress-wrap');
+  const progBar  = document.getElementById('progress-bar');
+  const progText = document.getElementById('progress-text');
+
+  progWrap.style.display = 'block';
+  progBar.style.width = '0%';
+  progText.textContent = '解析中…';
+
+  const startTime = Date.now();
+  let rowCount = 0;
+  const fileSize = file.size || 1;
+
+  Papa.parse(file, {
+    header: true,
+    skipEmptyLines: true,
+    dynamicTyping: true,
+    worker: true,
+    chunk(results) {
+      const rows = Array.isArray(results.data) ? results.data : [];
+      state.rawData.push(...rows);
+      rowCount += rows.length;
+
+      const cursor = typeof results.meta?.cursor === 'number' ? results.meta.cursor : 0;
+      const pct = Math.min(99, Math.max(0, Math.round((cursor / fileSize) * 100)));
+      progBar.style.width = pct + '%';
+      progText.textContent = `已解析 ${rowCount.toLocaleString()} 行…`;
+    },
+    complete() {
+      progBar.style.width = '100%';
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      progText.textContent = `✓ ${state.rawData.length.toLocaleString()} 行 · ${elapsed}s`;
+
+      setTimeout(() => {
+        progWrap.style.display = 'none';
+      }, 1500);
+
+      if (!state.rawData.length) {
+        showToast('CSV 为空或没有可解析的数据');
+        return;
+      }
+
+      state.columns = Object.keys(state.rawData[0] || {});
+      if (!state.columns.length) {
+        showToast('未检测到有效列');
+        return;
+      }
+
+      populateColSelects();
+      document.getElementById('col-mapping').style.display = 'block';
+      document.getElementById('total-count').textContent = state.rawData.length.toLocaleString();
+      showToast(`已加载 ${state.rawData.length.toLocaleString()} 条数据`);
+    },
+    error(err) {
+      progText.textContent = '❌ 解析失败: ' + (err?.message || '未知错误');
+      showToast('CSV 解析失败');
+    }
+  });
+}
+
+function populateColSelects() {
+  const ids = ['col-lng', 'col-lat', 'col-name', 'col-cat', 'col-val'];
+  const hints = {
+    'col-lng': ['lng','lon','longitude','经度','x'],
+    'col-lat': ['lat','latitude','纬度','y'],
+    'col-name': ['name','名称','title','label','标题'],
+    'col-cat': ['cat','category','type','分类','类别','class'],
+    'col-val': ['val','value','count','数值','num','amount']
+  };
+
+  ids.forEach(id => {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '<option value="">-- 选择列 --</option>';
+
+    state.columns.forEach(c => {
+      const colName = String(c);
+      const opt = document.createElement('option');
+      opt.value = colName;
+      opt.textContent = colName;
+      sel.appendChild(opt);
+    });
+
+    const guess = state.columns.find(c => {
+      const colName = String(c).toLowerCase();
+      return hints[id]?.some(h => colName.includes(h));
+    });
+
+    if (guess) sel.value = String(guess);
+  });
+}
+
+function applyMapping() {
+  state.mapping.lng  = document.getElementById('col-lng').value;
+  state.mapping.lat  = document.getElementById('col-lat').value;
+  state.mapping.name = document.getElementById('col-name').value;
+  state.mapping.cat  = document.getElementById('col-cat').value;
+  state.mapping.val  = document.getElementById('col-val').value;
+
+  if (!state.mapping.lng || !state.mapping.lat) {
+    showToast('请至少选择经度和纬度列');
+    return;
+  }
+
+  if (state.mapping.cat) {
+    const catSet = new Set();
+    for (const row of state.rawData) {
+      const v = row[state.mapping.cat];
+      if (v !== null && v !== undefined && String(v).trim() !== '') {
+        catSet.add(String(v));
+      }
+    }
+    state.allCats = Array.from(catSet);
+    state.activeCats = new Set(state.allCats);
+    renderCatChips();
+
+    document.getElementById('cat-section').style.display =
+      state.allCats.length ? 'block' : 'none';
+  } else {
+    state.allCats = [];
+    state.activeCats = new Set();
+    document.getElementById('cat-section').style.display = 'none';
+    document.getElementById('cat-filters').innerHTML = '';
+  }
+
+  if (state.mapping.val) {
+    let min = Infinity;
+    let max = -Infinity;
+    let count = 0;
+
+    for (const row of state.rawData) {
+      const v = Number(row[state.mapping.val]);
+      if (!Number.isNaN(v) && Number.isFinite(v)) {
+        if (v < min) min = v;
+        if (v > max) max = v;
+        count++;
+      }
+    }
+
+    if (count > 0) {
+      state.valMin = min;
+      state.valMax = max;
+      state.filterMin = min;
+      state.filterMax = max;
+
+      const rMin = document.getElementById('range-min');
+      const rMax = document.getElementById('range-max');
+
+      rMin.min = rMax.min = String(min);
+      rMin.max = rMax.max = String(max);
+      rMin.value = String(min);
+      rMax.value = String(max);
+
+      const step = min === max ? 1 : (max - min) / 100;
+      rMin.step = rMax.step = String(step);
+
+      document.getElementById('range-min-label').textContent = fmt(min);
+      document.getElementById('range-max-label').textContent = fmt(max);
+      document.getElementById('range-section').style.display = 'block';
+    } else {
+      state.valMin = 0;
+      state.valMax = 100;
+      state.filterMin = 0;
+      state.filterMax = 100;
+      document.getElementById('range-section').style.display = 'none';
+    }
+  } else {
+    document.getElementById('range-section').style.display = 'none';
+  }
+
+  document.getElementById('filter-section').style.display = 'block';
+  document.getElementById('stats-section').style.display = 'block';
+
+  updateStats();
+  initMapIfNeeded();
+  applyFilters(true);
+}
+
+function renderCatChips() {
+  const wrap = document.getElementById('cat-filters');
+  wrap.innerHTML = '';
+
+  const all = document.createElement('div');
+  all.className = 'cat-chip active';
+  all.innerHTML = '<span class="chip-dot" style="background:#8a96a3"></span>全部';
+  all.onclick = () => {
+    state.activeCats = new Set(state.allCats);
+    renderCatChips();
+    applyFilters();
+  };
+  wrap.appendChild(all);
+  state.allChipEl = all;
+
+  state.allCats.forEach((cat, i) => {
+    const color = getCategoryGradientColor(i, state.allCats.length);
+    const chip = document.createElement('div');
+    chip.className = state.activeCats.has(cat) ? 'cat-chip active' : 'cat-chip';
+    chip.dataset.cat = cat;
+    chip.innerHTML = `<span class="chip-dot" style="background:rgb(${color.join(',')})"></span>${escapeHtml(cat)}`;
+    chip.onclick = () => {
+      if (state.activeCats.has(cat)) {
+        state.activeCats.delete(cat);
+      } else {
+        state.activeCats.add(cat);
+      }
+
+      if (state.activeCats.size === 0) {
+        state.activeCats = new Set(state.allCats);
+      }
+
+      renderCatChips();
+      applyFilters();
+    };
+    wrap.appendChild(chip);
+  });
+
+  syncAllChipState();
+}
+
+function syncAllChipState() {
+  if (!state.allChipEl) return;
+  const allSelected = state.allCats.length > 0 && state.activeCats.size === state.allCats.length;
+  state.allChipEl.classList.toggle('active', allSelected);
+}
+
+function onRangeChange() {
+  let mn = Number(document.getElementById('range-min').value);
+  let mx = Number(document.getElementById('range-max').value);
+
+  if (mn > mx) [mn, mx] = [mx, mn];
+
+  state.filterMin = mn;
+  state.filterMax = mx;
+
+  document.getElementById('range-min-label').textContent = fmt(mn);
+  document.getElementById('range-max-label').textContent = fmt(mx);
+
+  applyFilters();
+}
+
+function applyFilters(refit = false) {
+  const search = document.getElementById('search-box').value.trim().toLowerCase();
+  const { name, cat, val, lng, lat } = state.mapping;
+
+  state.filteredData = state.rawData.filter(d => {
+    const lo = Number(d[lng]);
+    const la = Number(d[lat]);
+
+    if (!Number.isFinite(lo) || !Number.isFinite(la)) return false;
+
+    if (cat) {
+      const catValue = String(d[cat] ?? '');
+      if (!state.activeCats.has(catValue)) return false;
+    }
+
+    if (val) {
+      const rawValue = d[val];
+      if (rawValue !== null && rawValue !== undefined && String(rawValue).trim() !== '') {
+        const v = Number(rawValue);
+        if (!Number.isFinite(v)) return false;
+        if (v < state.filterMin || v > state.filterMax) return false;
+      }
+    }
+
+    if (search && name) {
+      const nameValue = String(d[name] ?? '').toLowerCase();
+      if (!nameValue.includes(search)) return false;
+    }
+
+    return true;
+  });
+
+  document.getElementById('vis-count').textContent = state.filteredData.length.toLocaleString();
+  if (refit) fitViewToData(state.filteredData);
+  updateMap();
+}
+
+function initMapIfNeeded() {
+  if (state.deckgl) return;
+
+  const coords = getValidCoordinates();
+  const center = getCenterFromCoords(coords);
+
+  state.deckgl = new deck.DeckGL({
+    container: document.getElementById('map'),
+    mapStyle: getMapStyle(),
+    initialViewState: {
+      longitude: center.lng,
+      latitude: center.lat,
+      zoom: center.zoom,
+      pitch: 0,
+      bearing: 0,
+    },
+    controller: true,
+    layers: [],
+    getTooltip: null,
+    onViewStateChange: ({ viewState }) => {
+      const coordsEl = document.getElementById('coords');
+      if (coordsEl) {
+        coordsEl.textContent = `${viewState.longitude.toFixed(4)}, ${viewState.latitude.toFixed(4)}`;
+      }
+    }
+  });
+}
+
+function getValidCoordinates() {
+  const { lng, lat } = state.mapping;
+  const coords = [];
+
+  for (const row of state.rawData) {
+    const lo = Number(row[lng]);
+    const la = Number(row[lat]);
+    if (Number.isFinite(lo) && Number.isFinite(la)) {
+      coords.push([lo, la]);
+    }
+  }
+  return coords;
+}
+
+function getCenterFromCoords(coords) {
+  if (!coords.length) {
+    return { lng: 116.4, lat: 39.9, zoom: 6 };
+  }
+
+  let sumLng = 0;
+  let sumLat = 0;
+
+  for (const [lng, lat] of coords) {
+    sumLng += lng;
+    sumLat += lat;
+  }
+
+  return {
+    lng: sumLng / coords.length,
+    lat: sumLat / coords.length,
+    zoom: 6
+  };
+}
+
+function getCatColor(d) {
+  const { cat } = state.mapping;
+  if (!cat || !d[cat]) return [140, 150, 160, 200];
+
+  const key = String(d[cat]);
+  const idx = state.allCats.indexOf(key);
+  const color = getCategoryGradientColor(
+    idx >= 0 ? idx : 0,
+    Math.max(state.allCats.length, 1)
+  );
+
+  return [...color, 200];
+}
+
+
+function fitViewToData(data) {
+  if (!state.deckgl || !Array.isArray(data) || !data.length) return;
+
+  let minLng = Infinity, maxLng = -Infinity;
+  let minLat = Infinity, maxLat = -Infinity;
+
+  for (const row of data) {
+    const lo = Number(row[state.mapping.lng]);
+    const la = Number(row[state.mapping.lat]);
+    if (!Number.isFinite(lo) || !Number.isFinite(la)) continue;
+    if (lo < minLng) minLng = lo;
+    if (lo > maxLng) maxLng = lo;
+    if (la < minLat) minLat = la;
+    if (la > maxLat) maxLat = la;
+  }
+
+  if (!Number.isFinite(minLng) || !Number.isFinite(minLat)) return;
+
+  const centerLng = (minLng + maxLng) / 2;
+  const centerLat = (minLat + maxLat) / 2;
+  const spanLng = Math.max(0.01, maxLng - minLng);
+  const spanLat = Math.max(0.01, maxLat - minLat);
+  const maxSpan = Math.max(spanLng, spanLat);
+
+  let zoom = 11 - Math.log2(maxSpan);
+  if (!Number.isFinite(zoom)) zoom = 6;
+  zoom = Math.max(1.5, Math.min(14, zoom));
+
+  state.deckgl.setProps({
+    initialViewState: {
+      longitude: centerLng,
+      latitude: centerLat,
+      zoom,
+      pitch: 0,
+      bearing: 0,
+      transitionDuration: 600
+    }
+  });
+}
+
+function updateMap() {
+  if (!state.deckgl) return;
+
+  const { lng, lat, val } = state.mapping;
+  const data = state.filteredData;
+
+  const layer = new deck.ScatterplotLayer({
+    id: 'points',
+    data,
+    getPosition: d => [Number(d[lng]), Number(d[lat])],
+    getRadius: d => {
+      if (!val) return 60;
+      const v = Number(d[val]);
+      if (!Number.isFinite(v)) return 60;
+
+      if (state.valMax === state.valMin) return 80;
+
+      const norm = (v - state.valMin) / (state.valMax - state.valMin);
+      return 30 + norm * 120;
+    },
+    getFillColor: d => getCatColor(d),
+    getLineColor: [255, 255, 255, 30],
+    lineWidthMinPixels: 0,
+    radiusUnits: 'meters',
+    radiusMinPixels: 3,
+    radiusMaxPixels: 20,
+    pickable: true,
+    autoHighlight: true,
+    highlightColor: [255,255,255,80],
+    onClick: info => {
+      const { object, x, y } = info;
+      if (object) {
+        showPopup(object, x, y);
+      } else {
+        closePopup();
+      }
+    },
+    updateTriggers: {
+      getFillColor: [state.allCats.join('|')],
+      getRadius: [state.valMin, state.valMax]
+    }
+  });
+
+  state.deckgl.setProps({
+    mapStyle: getMapStyle(),
+    layers: [layer]
+  });
+}
+
+function showPopup(d, x, y) {
+  const { name, cat } = state.mapping;
+  const popup = document.getElementById('popup');
+
+  document.getElementById('popup-name').textContent =
+    name ? (d[name] ?? '未知') : '数据点';
+
+  document.getElementById('popup-cat').textContent =
+    cat ? (d[cat] ?? '-') : '';
+
+  const body = document.getElementById('popup-body');
+  body.innerHTML = '';
+
+  const skip = new Set([
+    state.mapping.lng,
+    state.mapping.lat,
+    state.mapping.name,
+    state.mapping.cat
+  ]);
+
+  const keys = Object.keys(d).filter(k => !skip.has(k));
+  keys.slice(0, 8).forEach(k => {
+    const row = document.createElement('div');
+    row.className = 'popup-row';
+
+    const keyEl = document.createElement('span');
+    keyEl.className = 'popup-key';
+    keyEl.textContent = k;
+
+    const valEl = document.createElement('span');
+    valEl.className = 'popup-val';
+    valEl.textContent = fmtVal(d[k]);
+
+    row.appendChild(keyEl);
+    row.appendChild(valEl);
+    body.appendChild(row);
+  });
+
+  const pw = 280;
+  const ph = 220;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  let px = x + 12;
+  let py = y - ph / 2;
+
+  if (px + pw > vw) px = x - pw - 12;
+  if (py < 60) py = 60;
+  if (py + ph > vh - 20) py = vh - ph - 20;
+
+  popup.style.left = px + 'px';
+  popup.style.top = py + 'px';
+  popup.classList.add('visible');
+}
+
+function closePopup() {
+  document.getElementById('popup').classList.remove('visible');
+}
+
+function updateStats() {
+  document.getElementById('stat-total').textContent = state.rawData.length.toLocaleString();
+  document.getElementById('stat-cats').textContent = state.allCats.length;
+
+  const hasVal = !!state.mapping.val && Number.isFinite(state.valMin) && Number.isFinite(state.valMax);
+  document.getElementById('stat-valmin').textContent = hasVal ? fmt(state.valMin) : '-';
+  document.getElementById('stat-valmax').textContent = hasVal ? fmt(state.valMax) : '-';
+}
+
+function fmt(n) {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '-';
+  if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1) + 'k';
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+function fmtVal(v) {
+  if (v === null || v === undefined || v === '') return '-';
+  if (typeof v === 'number' && Number.isFinite(v)) return v.toLocaleString();
+  return String(v);
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+document.addEventListener('click', e => {
+  const popup = document.getElementById('popup');
+  if (!popup.contains(e.target) && !e.target.closest('#popup-close')) {
+    if (!e.target.closest('canvas')) closePopup();
+  }
+});
+
+window.addEventListener('resize', () => {
+  if (state.deckgl) updateMap();
+});
+
+setTimeout(() => showToast('拖入 CSV 文件开始使用'), 600);
+</script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(err => {
+      console.error('Service Worker 注册失败:', err);
+    });
+  });
+}
+</script>
+</body>
+</html>
