@@ -4,8 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>数据地图 · DataMap</title>
+
 <link rel="manifest" href="./manifest.json">
 <meta name="theme-color" content="#080c10">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
@@ -76,6 +78,32 @@
   #theme-toggle .dot {
     width: 8px; height: 8px; border-radius: 50%;
     background: var(--accent); transition: background 0.3s;
+  }
+
+  #install-btn {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 250;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    background: rgba(99,210,255,0.12);
+    border: 1px solid var(--border-active);
+    border-radius: 999px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.2s;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    backdrop-filter: blur(10px);
+  }
+  #install-btn:hover {
+    background: rgba(99,210,255,0.2);
+    transform: translateY(-1px);
   }
 
   #panel {
@@ -308,6 +336,8 @@
   <span id="theme-label">暗色</span>
 </div>
 
+<button id="install-btn" type="button">⬇ 安装应用</button>
+
 <div id="panel">
   <div class="panel-logo">
     <h2>DATAMAP</h2>
@@ -438,11 +468,12 @@ const state = {
   allChipEl: null,
 };
 
-// 灰蓝科技风渐变：浅灰蓝 -> 深灰蓝
 const MONOCHROME_BASE = {
   light: [198, 210, 224],
   dark: [58, 92, 128]
 };
+
+let deferredInstallPrompt = null;
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
@@ -492,6 +523,46 @@ function togglePanel() {
   document.getElementById('panel').classList.toggle('collapsed', !state.panelOpen);
   document.getElementById('panel-toggle').textContent = state.panelOpen ? '‹' : '›';
 }
+
+function showInstallButton() {
+  const btn = document.getElementById('install-btn');
+  if (btn) btn.style.display = 'inline-flex';
+}
+
+function hideInstallButton() {
+  const btn = document.getElementById('install-btn');
+  if (btn) btn.style.display = 'none';
+}
+
+async function installApp() {
+  if (!deferredInstallPrompt) {
+    showToast('当前浏览器暂未提供安装入口');
+    return;
+  }
+
+  deferredInstallPrompt.prompt();
+  const result = await deferredInstallPrompt.userChoice;
+  console.log('安装结果:', result?.outcome);
+  deferredInstallPrompt = null;
+  hideInstallButton();
+}
+
+document.getElementById('install-btn').addEventListener('click', installApp);
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  showInstallButton();
+  console.log('beforeinstallprompt fired');
+  showToast('可安装，点击右下角“安装应用”');
+});
+
+window.addEventListener('appinstalled', () => {
+  console.log('PWA 已安装');
+  deferredInstallPrompt = null;
+  hideInstallButton();
+  showToast('应用已安装');
+});
 
 const uploadZone = document.getElementById('upload-zone');
 const fileInput  = document.getElementById('file-input');
@@ -899,7 +970,6 @@ function getCatColor(d) {
   return [...color, 200];
 }
 
-
 function fitViewToData(data) {
   if (!state.deckgl || !Array.isArray(data) || !data.length) return;
 
@@ -1104,11 +1174,16 @@ setTimeout(() => showToast('拖入 CSV 文件开始使用'), 600);
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(err => {
-      console.error('Service Worker 注册失败:', err);
-    });
+    navigator.serviceWorker.register('./sw.js')
+      .then(() => {
+        console.log('Service Worker 注册成功');
+      })
+      .catch(err => {
+        console.error('Service Worker 注册失败:', err);
+      });
   });
 }
 </script>
+
 </body>
 </html>
